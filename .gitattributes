@@ -1,1 +1,2 @@
 dependencies/glslc filter=lfs diff=lfs merge=lfs -text
+dependencies/glslc.exe filter=lfs diff=lfs merge=lfs -text
