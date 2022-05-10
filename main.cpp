@@ -297,7 +297,7 @@ private:
         int textureWidth;
         int textureHeight;
         int textureChannels;
-        stbi_uc *pixels = stbi_load("res/images/statue.jpg", &textureWidth, &textureHeight, &textureChannels, STBI_rgb_alpha);
+        stbi_uc *pixels = stbi_load("res/textures/statue.jpg", &textureWidth, &textureHeight, &textureChannels, STBI_rgb_alpha);
         VkDeviceSize imageSize = textureWidth * textureHeight * 4;
         if (!pixels)
             throw std::runtime_error("Failed to load texture image!");
