@@ -1,12 +1,16 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define TINYOBJLOADER_IMPLEMENTATION
+#define GLM_ENABKE_EXPERIMENTAL
 
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include <glm/gtx/hash.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <chrono>
 #include "dependencies/stb/stb_image.h"
+#include "dependencies/tinyobjloader/tiny_obj_loader.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -19,6 +23,7 @@
 #include <limits>
 #include <fstream>
 #include <array>
+#include <unordered_map>
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -48,6 +53,48 @@ void destroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
         function(instance, debugMessenger, pAllocator);
 }
 
+struct Vertex {
+    glm::vec3 pos;
+    glm::vec3 color;
+    glm::vec2 texCoord;
+    bool operator == (const Vertex &other) const {
+        return pos == other.pos && color == other.color && texCoord == other.texCoord;
+    }
+    static VkVertexInputBindingDescription getBindingDescription() {
+        VkVertexInputBindingDescription bindingDescription{};
+        bindingDescription.binding = 0;
+        bindingDescription.stride = sizeof(Vertex);
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        return bindingDescription;
+    }
+    static std::array<VkVertexInputAttributeDescription, 3> getattributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+        attributeDescriptions[2].binding = 0;
+        attributeDescriptions[2].location = 2;
+        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+        return attributeDescriptions;
+    }
+};
+
+namespace std {
+    template<> struct hash<Vertex> {
+        size_t operator()(Vertex const& vertex) const {
+            return ((hash<glm::vec3>()(vertex.pos) ^
+                     (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+                   (hash<glm::vec2>()(vertex.texCoord) << 1);
+        }
+    };
+}
+
 class App {
 public:
     void run() {
@@ -56,35 +103,6 @@ public:
         mainLoop();
         cleanup();
     }
-
-    struct Vertex {
-        glm::vec3 pos;
-        glm::vec3 color;
-        glm::vec2 texCoord;
-        static VkVertexInputBindingDescription getBindingDescription() {
-            VkVertexInputBindingDescription bindingDescription{};
-            bindingDescription.binding = 0;
-            bindingDescription.stride = sizeof(Vertex);
-            bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-            return bindingDescription;
-        }
-        static std::array<VkVertexInputAttributeDescription, 3> getattributeDescriptions() {
-            std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
-            attributeDescriptions[0].binding = 0;
-            attributeDescriptions[0].location = 0;
-            attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-            attributeDescriptions[0].offset = offsetof(Vertex, pos);
-            attributeDescriptions[1].binding = 0;
-            attributeDescriptions[1].location = 1;
-            attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-            attributeDescriptions[1].offset = offsetof(Vertex, color);
-            attributeDescriptions[2].binding = 0;
-            attributeDescriptions[2].location = 2;
-            attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-            attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
-            return attributeDescriptions;
-        }
-    };
 
     struct UniformBufferObject {
         glm::mat4 model;
@@ -117,24 +135,10 @@ private:
     const std::vector<const char*> deviceExtensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     };
-    const std::vector<Vertex> vertices = {
-            {{-0.5f, 0.5f, 0.0f} ,{1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
-            {{-0.5f, -0.5f, 0.0f} ,{0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-            {{0.5f, 0.5f, 0.0f} ,{0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-            {{0.5f, -0.5f, 0.0f} ,{1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-
-            {{-0.5f, 0.5f, -0.5f} ,{1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
-            {{-0.5f, -0.5f, -0.5f} ,{0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-            {{0.5f, 0.5f, -0.5f} ,{0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-            {{0.5f, -0.5f, -0.5f} ,{1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
-    };
-    const std::vector<uint32_t> indices = {
-            0, 1, 2, 1, 3, 2,
-            4, 5, 6, 5, 7, 6
-    };
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
     const uint32_t WIDTH = 800;
     const uint32_t HEIGHT = 600;
-
 
     GLFWwindow *window;
     VkInstance instance;
@@ -209,6 +213,7 @@ private:
         createTextureImage();
         createTextureImageView();
         createTextureSampler();
+        loadModel();
         createVertexBuffer();
         createIndexBuffer();
         createUniformBuffers();
@@ -216,6 +221,36 @@ private:
         createDescriptorSets();
         createCommandBuffers();
         createSyncObjects();
+    }
+
+    void loadModel() {
+        tinyobj::attrib_t attrib;
+        std::vector<tinyobj::shape_t> shapes;
+        std::vector<tinyobj::material_t> materials;
+        std::string warn;
+        std::string err;
+        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, "res/models/viking_room.obj"))
+            throw std::runtime_error(warn + err);
+        std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+        for (const auto& shape : shapes) {
+            for (const auto &index : shape.mesh.indices) {
+                Vertex vertex{};
+                vertex.pos = {
+                        attrib.vertices[3 * index.vertex_index + 0],
+                        attrib.vertices[3 * index.vertex_index + 1],
+                        attrib.vertices[3 * index.vertex_index + 2],
+                };
+                vertex.texCoord = {
+                        attrib.texcoords[2 * index.texcoord_index + 0],
+                        1.0f - attrib.texcoords[2 * index.texcoord_index + 1],
+                };
+                if (uniqueVertices.count(vertex) == 0) {
+                    uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+                    vertices.push_back(vertex);
+                }
+                indices.push_back(uniqueVertices[vertex]);
+            }
+        }
     }
 
     void createDepthResources() {
@@ -297,7 +332,7 @@ private:
         int textureWidth;
         int textureHeight;
         int textureChannels;
-        stbi_uc *pixels = stbi_load("res/textures/statue.jpg", &textureWidth, &textureHeight, &textureChannels, STBI_rgb_alpha);
+        stbi_uc *pixels = stbi_load("res/textures/viking_room.png", &textureWidth, &textureHeight, &textureChannels, STBI_rgb_alpha);
         VkDeviceSize imageSize = textureWidth * textureHeight * 4;
         if (!pixels)
             throw std::runtime_error("Failed to load texture image!");
@@ -1283,11 +1318,11 @@ private:
     }
 
     VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR> &availablePresentModes) {
-        for (const auto &availablePresentMode : availablePresentModes) {
-            if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
-                return availablePresentMode;
-            }
-        }
+//        for (const auto &availablePresentMode : availablePresentModes) {
+//            if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+//                return availablePresentMode;
+//            }
+//        }
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 
